@@ -114,7 +114,7 @@ def sort_by_agent_number(df):
         return df
 
 def calculate_oc619_commission(locations_data):
-    """计算OC619系列的多层佣金分配"""
+    """计算OC619系列的多层佣金分配 - 修正版"""
     # 定义层级关系
     hierarchy = {
         # 第三层 (底层)
@@ -143,7 +143,7 @@ def calculate_oc619_commission(locations_data):
         if location in hierarchy:
             direct_sales[location] = data["total_amount"]
     
-    # 计算第三层业绩 (底层)
+    # 计算第三层业绩 (底层) - 每个地点的直接业绩
     for location, info in hierarchy.items():
         if info["level"] == 3:
             level_totals[3][location] = direct_sales.get(location, 0)
@@ -169,13 +169,21 @@ def calculate_oc619_commission(locations_data):
                     total += level_totals[2].get(sub_location, 0)
             level_totals[1][location] = total
     
-    # 计算佣金
+    # 计算佣金 - 修正版
     commission_breakdown = {}
     
-    # 第三层佣金: 自己直接业绩 × 5%
-    for location in level_totals[3]:
-        if level_totals[3][location] > 0:
-            commission_breakdown[location] = level_totals[3][location] * 0.05
+    # 第三层佣金: 全部第三层业绩总和 × 5%，然后平分给有业绩的第三层
+    total_level3_sales = sum(level_totals[3].values())
+    total_level3_commission = total_level3_sales * 0.05
+    
+    # 计算有业绩的第三层数量
+    active_level3_locations = [loc for loc, sales in level_totals[3].items() if sales > 0]
+    
+    if active_level3_locations and total_level3_commission > 0:
+        # 平分给有业绩的第三层
+        commission_per_location = total_level3_commission / len(active_level3_locations)
+        for location in active_level3_locations:
+            commission_breakdown[location] = commission_per_location
     
     # 第二层佣金: 自己及下属总业绩 × 20% - 下属第三层佣金
     for location in level_totals[2]:
@@ -207,7 +215,7 @@ def calculate_oc619_commission(locations_data):
             if final_commission > 0:
                 commission_breakdown[location] = final_commission
     
-    return commission_breakdown, level_totals
+    return commission_breakdown, level_totals, total_level3_sales
 
 def calculate_commission(locations_data):
     """计算所有地点的佣金分配"""
@@ -225,7 +233,7 @@ def calculate_commission(locations_data):
     
     # 计算OC619系列佣金
     if oc619_locations:
-        oc619_commission, oc619_totals = calculate_oc619_commission(oc619_locations)
+        oc619_commission, oc619_totals, total_level3_sales = calculate_oc619_commission(oc619_locations)
         commission_results.update(oc619_commission)
     
     # 计算其他代理佣金 (30%)
@@ -327,7 +335,7 @@ async def upload_excel(file: UploadFile = File(...)):
 
 @app.post("/export-sorted/")
 async def export_sorted(file: UploadFile = File(...)):
-    """完全排序导出 - 包含多层佣金计算"""
+    """完全排序导出 - 包含修正的多层佣金计算"""
     try:
         contents = await file.read()
         df, error = process_excel_data(contents)
@@ -412,9 +420,9 @@ async def export_sorted(file: UploadFile = File(...)):
             summary_df.loc[len(summary_df)] = {'代理/层级': '总计', '佣金金额': total_all_commission}
             summary_df.to_excel(writer, sheet_name='Commission_Summary', index=False)
             
-            # Sheet 5: OC619佣金规则说明
+            # Sheet 5: 修正的佣金规则说明
             rules_df = pd.DataFrame({
-                'OC619多层佣金规则': [
+                'OC619多层佣金规则（修正版）': [
                     '第一层 (OC619):',
                     '  - 计算: (自己业绩 + 下属所有层业绩) × 5%',
                     '  - 实际: 第一层总佣金 - 下属所有层佣金',
@@ -426,7 +434,8 @@ async def export_sorted(file: UploadFile = File(...)):
                     '  - 如果下属没业绩，第二层拿不到佣金',
                     '',
                     '第三层 (OC619-01-01/OC619-01-02/等):',
-                    '  - 计算: 自己直接业绩 × 5%',
+                    '  - 计算: 全部第三层业绩总和 × 5%',
+                    '  - 分配: 平分给所有有业绩的第三层代理',
                     '  - 只能拿自己这层的佣金',
                     '',
                     '其他代理 (BELLA/肥子代理 638/WS/等):',
@@ -439,7 +448,7 @@ async def export_sorted(file: UploadFile = File(...)):
         
         # 纯英文文件名
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"multi_level_commission_{timestamp}.xlsx"
+        filename = f"updated_commission_calculation_{timestamp}.xlsx"
         
         return Response(
             content=output.getvalue(),
@@ -453,15 +462,15 @@ async def export_sorted(file: UploadFile = File(...)):
 @app.get("/")
 def root():
     return {
-        "message": "Excel Sorting and Multi-Level Commission Calculation API",
+        "message": "Excel Sorting and Updated Commission Calculation API",
         "endpoints": {
             "/upload-excel/": "Preview data with sorting and commission calculation",
-            "/export-sorted/": "Fully sorted export with multi-level commission calculation"
+            "/export-sorted/": "Fully sorted export with updated commission calculation"
         },
         "commission_rules": {
             "OC619第一层": "团队总业绩 × 5% - 下属所有佣金",
             "OC619第二层": "自己及下属业绩 × 20% - 下属第三层佣金", 
-            "OC619第三层": "自己直接业绩 × 5%",
+            "OC619第三层": "全部第三层业绩总和 × 5% (平分)",
             "其他代理": "自己总金额 × 30%"
         }
     }
