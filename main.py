@@ -113,136 +113,130 @@ def sort_by_agent_number(df):
         # 如果缺少列，就按原始顺序
         return df
 
-def calculate_oc619_commission(locations_data):
-    """计算OC619系列的多层佣金分配 - 修正版"""
-    # 定义层级关系
-    hierarchy = {
-        # 第三层 (底层)
-        "OC619-01-01": {"level": 3, "parent": "OC619-01"},
-        "OC619-01-02": {"level": 3, "parent": "OC619-01"},
-        "OC619-01-03": {"level": 3, "parent": "OC619-01"},
-        "OC619-01-01-01": {"level": 3, "parent": "OC619-01-01"},
-        
-        # 第二层
-        "OC619-01": {"level": 2, "parent": "OC619"},
-        
-        # 第一层 (顶层)
-        "OC619": {"level": 1, "parent": None}
+def calculate_hierarchical_commission(df):
+    """计算层级佣金分配"""
+    # 按层级分类
+    hierarchy_levels = {
+        "第一层": ["OC619"],           # 第一层
+        "第二层": ["OC619-01"],        # 第二层  
+        "第三层": ["OC619-01-01", "OC619-01-02", "OC619-01-03", "OC619-01-01-01"]  # 第三层
     }
     
-    # 初始化各层总金额
-    level_totals = {
-        1: {},  # 第一层
-        2: {},  # 第二层  
-        3: {}   # 第三层
-    }
-    
-    # 计算每个地点的直接业绩
-    direct_sales = {}
-    for location, data in locations_data.items():
-        if location in hierarchy:
-            direct_sales[location] = data["total_amount"]
-    
-    # 计算第三层业绩 (底层) - 每个地点的直接业绩
-    for location, info in hierarchy.items():
-        if info["level"] == 3:
-            level_totals[3][location] = direct_sales.get(location, 0)
-    
-    # 计算第二层业绩 (包含下属第三层)
-    for location, info in hierarchy.items():
-        if info["level"] == 2:
-            # 第二层总业绩 = 自己直接业绩 + 所有下属第三层业绩
-            total = direct_sales.get(location, 0)
-            # 找到所有下属第三层
-            for sub_location, sub_info in hierarchy.items():
-                if sub_info["level"] == 3 and sub_info["parent"] == location:
-                    total += level_totals[3].get(sub_location, 0)
-            level_totals[2][location] = total
-    
-    # 计算第一层业绩 (包含下属所有层)
-    for location, info in hierarchy.items():
-        if info["level"] == 1:
-            # 第一层总业绩 = 自己直接业绩 + 所有下属第二层总业绩
-            total = direct_sales.get(location, 0)
-            for sub_location, sub_info in hierarchy.items():
-                if sub_info["level"] == 2 and sub_info["parent"] == location:
-                    total += level_totals[2].get(sub_location, 0)
-            level_totals[1][location] = total
-    
-    # 计算佣金 - 修正版
-    commission_breakdown = {}
-    
-    # 第三层佣金: 全部第三层业绩总和 × 5%，然后平分给有业绩的第三层
-    total_level3_sales = sum(level_totals[3].values())
-    total_level3_commission = total_level3_sales * 0.05
-    
-    # 计算有业绩的第三层数量
-    active_level3_locations = [loc for loc, sales in level_totals[3].items() if sales > 0]
-    
-    if active_level3_locations and total_level3_commission > 0:
-        # 平分给有业绩的第三层
-        commission_per_location = total_level3_commission / len(active_level3_locations)
-        for location in active_level3_locations:
-            commission_breakdown[location] = commission_per_location
-    
-    # 第二层佣金: 自己及下属总业绩 × 20% - 下属第三层佣金
-    for location in level_totals[2]:
-        if level_totals[2][location] > 0:
-            base_commission = level_totals[2][location] * 0.20
-            
-            # 减去下属第三层佣金
-            subordinate_commission = 0
-            for sub_location, sub_info in hierarchy.items():
-                if sub_info["level"] == 3 and sub_info["parent"] == location:
-                    subordinate_commission += commission_breakdown.get(sub_location, 0)
-            
-            final_commission = base_commission - subordinate_commission
-            if final_commission > 0:
-                commission_breakdown[location] = final_commission
-    
-    # 第一层佣金: 整个团队总业绩 × 5% - 下属所有佣金
-    for location in level_totals[1]:
-        if level_totals[1][location] > 0:
-            base_commission = level_totals[1][location] * 0.05
-            
-            # 减去下属所有佣金
-            subordinate_commission = 0
-            for sub_location, sub_info in hierarchy.items():
-                if sub_info["parent"] == location:
-                    subordinate_commission += commission_breakdown.get(sub_location, 0)
-            
-            final_commission = base_commission - subordinate_commission
-            if final_commission > 0:
-                commission_breakdown[location] = final_commission
-    
-    return commission_breakdown, level_totals, total_level3_sales
-
-def calculate_commission(locations_data):
-    """计算所有地点的佣金分配"""
+    # 计算每个层级的业绩
+    level_performance = {}
     commission_results = {}
     
-    # 分离OC619系列和其他代理
-    oc619_locations = {}
-    other_locations = {}
+    # 计算第三层业绩（最底层）
+    third_layer_performance = 0
+    third_layer_locations = []
+    for location in hierarchy_levels["第三层"]:
+        location_data = df[df['上分地方'].str.contains(location, na=False)]
+        if len(location_data) > 0:
+            location_amount = location_data['金额'].sum()
+            third_layer_performance += location_amount
+            third_layer_locations.append({
+                "location": location,
+                "amount": location_amount
+            })
     
-    for location, data in locations_data.items():
-        if "OC619" in str(location):
-            oc619_locations[location] = data
-        else:
-            other_locations[location] = data
+    level_performance["第三层"] = third_layer_performance
     
-    # 计算OC619系列佣金
-    if oc619_locations:
-        oc619_commission, oc619_totals, total_level3_sales = calculate_oc619_commission(oc619_locations)
-        commission_results.update(oc619_commission)
+    # 计算第二层业绩（第二层 + 第三层）
+    second_layer_performance = 0
+    for location in hierarchy_levels["第二层"]:
+        location_data = df[df['上分地方'].str.contains(location, na=False)]
+        if len(location_data) > 0:
+            second_layer_performance += location_data['金额'].sum()
+    # 第二层业绩包括第三层
+    second_layer_performance += third_layer_performance
+    level_performance["第二层"] = second_layer_performance
     
-    # 计算其他代理佣金 (30%)
-    for location, data in other_locations.items():
-        total_amount = data["total_amount"]
-        if total_amount > 0:
-            commission_results[location] = total_amount * 0.30
+    # 计算第一层业绩（第一层 + 第二层 + 第三层）
+    first_layer_performance = 0
+    for location in hierarchy_levels["第一层"]:
+        location_data = df[df['上分地方'].str.contains(location, na=False)]
+        if len(location_data) > 0:
+            first_layer_performance += location_data['金额'].sum()
+    # 第一层业绩包括所有下层
+    first_layer_performance += second_layer_performance
+    level_performance["第一层"] = first_layer_performance
+    
+    # 计算佣金
+    commission_results = {
+        "第一层": {
+            "代理": "OC619",
+            "业绩总额": first_layer_performance,
+            "佣金率": "5%",
+            "佣金金额": first_layer_performance * 0.05,
+            "说明": "第一层业绩（自己 + 第二层 + 第三层）"
+        },
+        "第二层": {
+            "代理": "OC619-01", 
+            "业绩总额": second_layer_performance,
+            "佣金率": "20%",
+            "佣金金额": second_layer_performance * 0.20,
+            "说明": "第二层业绩（自己 + 第三层）"
+        },
+        "第三层": {
+            "代理": "第三层代理",
+            "业绩总额": third_layer_performance,
+            "佣金率": "5%", 
+            "佣金金额": third_layer_performance * 0.05,
+            "说明": "第三层业绩（仅自己层级）"
+        }
+    }
+    
+    # 添加第三层详细 breakdown
+    third_layer_details = []
+    for loc_info in third_layer_locations:
+        third_layer_details.append({
+            "代理": loc_info["location"],
+            "业绩": loc_info["amount"],
+            "佣金率": "5%",
+            "佣金": loc_info["amount"] * 0.05
+        })
+    
+    commission_results["第三层详情"] = third_layer_details
     
     return commission_results
+
+def calculate_commission(location, total_amount):
+    """计算普通代理佣金分配"""
+    if "肥子代理 638" in str(location):
+        # 肥子代理 638: 30% 佣金
+        commission_rate = 0.30
+        commission = total_amount * commission_rate
+        breakdown = {
+            "肥子代理 638": commission
+        }
+        return commission, commission_rate, breakdown
+    
+    elif "BELLA" in str(location).upper():
+        # BELLA: 30% 佣金
+        commission_rate = 0.30
+        commission = total_amount * commission_rate
+        breakdown = {
+            "BELLA": commission
+        }
+        return commission, commission_rate, breakdown
+    
+    elif "WS" in str(location).upper():
+        # WS: 30% 佣金
+        commission_rate = 0.30
+        commission = total_amount * commission_rate
+        breakdown = {
+            "WS": commission
+        }
+        return commission, commission_rate, breakdown
+    
+    else:
+        # 其他代理: 30% 佣金
+        commission_rate = 0.30
+        commission = total_amount * commission_rate
+        breakdown = {
+            str(location): commission
+        }
+        return commission, commission_rate, breakdown
 
 @app.post("/upload-excel/")
 async def upload_excel(file: UploadFile = File(...)):
@@ -279,9 +273,9 @@ async def upload_excel(file: UploadFile = File(...)):
             }
             location_details[location].append(transaction_info)
 
-        # 计算每个地点的金额统计
+        # 计算每个地点的金额统计和佣金
         location_amounts = {}
-        locations_data_for_commission = {}
+        commission_calculations = {}
         
         for location, transactions in location_details.items():
             amounts = [t["金额"] for t in transactions if t["金额"] is not None]
@@ -291,24 +285,29 @@ async def upload_excel(file: UploadFile = File(...)):
             if amounts:
                 total_amount = sum(amounts)
                 
-                location_amounts[location] = {
-                    "总交易笔数": len(transactions),
-                    "IN笔数": len(in_transactions),
-                    "OUT笔数": len(out_transactions),
-                    "总金额": total_amount,
-                    "平均金额": total_amount / len(amounts),
-                    "最大金额": max(amounts),
-                    "最小金额": min(amounts)
-                }
-                
-                locations_data_for_commission[location] = {
-                    "total_amount": total_amount,
-                    "transaction_count": len(transactions)
-                }
+                # 计算佣金（非OC619系列使用普通计算）
+                if "OC619" not in str(location):
+                    total_commission, commission_rate, commission_breakdown = calculate_commission(location, total_amount)
+                    
+                    location_amounts[location] = {
+                        "总交易笔数": len(transactions),
+                        "IN笔数": len(in_transactions),
+                        "OUT笔数": len(out_transactions),
+                        "总金额": total_amount,
+                        "平均金额": total_amount / len(amounts),
+                        "最大金额": max(amounts),
+                        "最小金额": min(amounts)
+                    }
+                    
+                    commission_calculations[location] = {
+                        "佣金率": f"{commission_rate * 100}%",
+                        "总佣金": total_commission,
+                        "佣金分配": commission_breakdown
+                    }
 
-        # 计算佣金
-        commission_results = calculate_commission(locations_data_for_commission)
-
+        # 计算OC619层级佣金
+        oc619_commission = calculate_hierarchical_commission(df)
+        
         # 预览数据（排序后的）
         df_sorted = sort_by_agent_number(df)
         preview_data = []
@@ -322,7 +321,8 @@ async def upload_excel(file: UploadFile = File(...)):
             "location_summary": {
                 "by_location": location_stats,
                 "amount_analysis": location_amounts,
-                "commission_calculation": commission_results,
+                "commission_calculation": commission_calculations,
+                "oc619_hierarchical_commission": oc619_commission,
                 "total_locations": len(location_stats)
             },
             "preview": preview_data,
@@ -335,7 +335,7 @@ async def upload_excel(file: UploadFile = File(...)):
 
 @app.post("/export-sorted/")
 async def export_sorted(file: UploadFile = File(...)):
-    """完全排序导出 - 包含修正的多层佣金计算"""
+    """完全排序导出 - 包含层级佣金计算"""
     try:
         contents = await file.read()
         df, error = process_excel_data(contents)
@@ -346,47 +346,35 @@ async def export_sorted(file: UploadFile = File(...)):
         # 完全排序：先按上分地方，再按代理序号
         df_sorted = sort_by_agent_number(df)
         
-        # 准备佣金计算数据
-        locations_data = {}
+        # 计算普通代理佣金
+        commission_data = []
+        total_commission_summary = {}
+        
         locations = df_sorted['上分地方'].dropna().unique()
-        
         for location in locations:
-            if location:
-                location_data = df_sorted[df_sorted['上分地方'] == location]
-                total_amount = location_data['金额'].sum()
-                locations_data[location] = {
-                    "total_amount": total_amount,
-                    "transaction_count": len(location_data)
-                }
-        
-        # 计算佣金
-        commission_results = calculate_commission(locations_data)
-        
-        # 创建详细的佣金计算表
-        commission_details = []
-        for location in locations:
-            if location:
+            if location and "OC619" not in str(location):
                 location_data = df_sorted[df_sorted['上分地方'] == location]
                 total_amount = location_data['金额'].sum()
                 
-                commission_row = {
+                # 计算佣金
+                total_commission, commission_rate, commission_breakdown = calculate_commission(location, total_amount)
+                
+                commission_data.append({
                     '上分地方': location,
                     '总金额': total_amount,
-                    '交易笔数': len(location_data)
-                }
+                    '佣金率': f"{commission_rate * 100}%",
+                    '总佣金': total_commission,
+                    **commission_breakdown
+                })
                 
-                # 添加佣金信息
-                if location in commission_results:
-                    commission_row['佣金'] = commission_results[location]
-                    if "OC619" in location:
-                        commission_row['佣金率'] = "多层分配"
-                    else:
-                        commission_row['佣金率'] = "30%"
-                else:
-                    commission_row['佣金'] = 0
-                    commission_row['佣金率'] = "0%"
-                
-                commission_details.append(commission_row)
+                # 汇总总佣金
+                for agent, amount in commission_breakdown.items():
+                    if agent not in total_commission_summary:
+                        total_commission_summary[agent] = 0
+                    total_commission_summary[agent] += amount
+        
+        # 计算OC619层级佣金
+        oc619_commission = calculate_hierarchical_commission(df_sorted)
         
         # 导出
         output = io.BytesIO()
@@ -399,47 +387,74 @@ async def export_sorted(file: UploadFile = File(...)):
                 '代理序号': 'count',
                 '金额': ['sum', 'mean', 'min', 'max']
             }).round(2)
+            
+            # 重命名列
             location_summary.columns = ['交易笔数', '总金额', '平均金额', '最小金额', '最大金额']
             location_summary.to_excel(writer, sheet_name='Location_Statistics')
             
-            # Sheet 3: 佣金计算详情
-            commission_df = pd.DataFrame(commission_details)
-            commission_df.to_excel(writer, sheet_name='Commission_Details', index=False)
+            # Sheet 3: 普通代理佣金计算
+            if commission_data:
+                commission_df = pd.DataFrame(commission_data)
+                commission_df.to_excel(writer, sheet_name='Commission_Calculation', index=False)
             
-            # Sheet 4: 佣金汇总
+            # Sheet 4: OC619层级佣金计算
+            hierarchical_data = []
+            for level, info in oc619_commission.items():
+                if level != "第三层详情":
+                    hierarchical_data.append({
+                        '层级': level,
+                        '代理': info['代理'],
+                        '业绩总额': info['业绩总额'],
+                        '佣金率': info['佣金率'],
+                        '佣金金额': info['佣金金额'],
+                        '说明': info['说明']
+                    })
+            
+            hierarchical_df = pd.DataFrame(hierarchical_data)
+            hierarchical_df.to_excel(writer, sheet_name='OC619_Hierarchical', index=False)
+            
+            # Sheet 5: 第三层详细佣金
+            third_layer_details = []
+            for detail in oc619_commission.get("第三层详情", []):
+                third_layer_details.append(detail)
+            
+            if third_layer_details:
+                third_layer_df = pd.DataFrame(third_layer_details)
+                third_layer_df.to_excel(writer, sheet_name='Third_Layer_Details', index=False)
+            
+            # Sheet 6: 佣金汇总
             summary_data = []
-            total_all_commission = 0
-            for agent, commission in commission_results.items():
-                summary_data.append({
-                    '代理/层级': agent,
-                    '佣金金额': commission
-                })
-                total_all_commission += commission
+            # 添加普通代理佣金
+            for agent, amount in total_commission_summary.items():
+                summary_data.append({'代理': agent, '佣金金额': amount, '类型': '普通代理'})
+            
+            # 添加OC619层级佣金
+            for level, info in oc619_commission.items():
+                if level != "第三层详情":
+                    summary_data.append({
+                        '代理': info['代理'], 
+                        '佣金金额': info['佣金金额'],
+                        '类型': f'OC619-{level}'
+                    })
             
             summary_df = pd.DataFrame(summary_data)
-            summary_df.loc[len(summary_df)] = {'代理/层级': '总计', '佣金金额': total_all_commission}
             summary_df.to_excel(writer, sheet_name='Commission_Summary', index=False)
             
-            # Sheet 5: 修正的佣金规则说明
+            # Sheet 7: 佣金规则说明
             rules_df = pd.DataFrame({
-                'OC619多层佣金规则（修正版）': [
-                    '第一层 (OC619):',
-                    '  - 计算: (自己业绩 + 下属所有层业绩) × 5%',
-                    '  - 实际: 第一层总佣金 - 下属所有层佣金',
-                    '  - 如果下属没业绩，第一层拿不到佣金',
+                '佣金分配规则': [
+                    '普通代理佣金规则:',
+                    '肥子代理 638: 总金额 × 30%',
+                    'BELLA: 总金额 × 30%', 
+                    'WS: 总金额 × 30%',
+                    '其他代理: 总金额 × 30%',
                     '',
-                    '第二层 (OC619-01):',
-                    '  - 计算: (自己业绩 + 下属第三层业绩) × 20%', 
-                    '  - 实际: 第二层总佣金 - 下属第三层佣金',
-                    '  - 如果下属没业绩，第二层拿不到佣金',
+                    'OC619层级佣金规则:',
+                    '第一层 (OC619): (自己业绩 + 第二层业绩 + 第三层业绩) × 5%',
+                    '第二层 (OC619-01): (自己业绩 + 第三层业绩) × 20%',
+                    '第三层 (OC619-01-01/02/03等): (仅自己业绩) × 5%',
                     '',
-                    '第三层 (OC619-01-01/OC619-01-02/等):',
-                    '  - 计算: 全部第三层业绩总和 × 5%',
-                    '  - 分配: 平分给所有有业绩的第三层代理',
-                    '  - 只能拿自己这层的佣金',
-                    '',
-                    '其他代理 (BELLA/肥子代理 638/WS/等):',
-                    '  - 计算: 自己总金额 × 30%'
+                    '注意: 如果下层没有业绩，上层不会获得该层的佣金'
                 ]
             })
             rules_df.to_excel(writer, sheet_name='Commission_Rules', index=False)
@@ -448,7 +463,7 @@ async def export_sorted(file: UploadFile = File(...)):
         
         # 纯英文文件名
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"updated_commission_calculation_{timestamp}.xlsx"
+        filename = f"fully_sorted_with_hierarchical_commission_{timestamp}.xlsx"
         
         return Response(
             content=output.getvalue(),
@@ -462,15 +477,22 @@ async def export_sorted(file: UploadFile = File(...)):
 @app.get("/")
 def root():
     return {
-        "message": "Excel Sorting and Updated Commission Calculation API",
+        "message": "Excel Sorting and Hierarchical Commission Calculation API",
         "endpoints": {
             "/upload-excel/": "Preview data with sorting and commission calculation",
-            "/export-sorted/": "Fully sorted export with updated commission calculation"
+            "/export-sorted/": "Fully sorted export with hierarchical commission calculation"
+        },
+        "sorting_logic": {
+            "primary": "上分地方 (BELLA → 肥子代理 638 → OC619-01-01 → WS → 其他)",
+            "secondary": "代理序号类型 (OC IN → OC OUT → 其他)",
+            "tertiary": "代理序号数字 (从小到大)"
         },
         "commission_rules": {
-            "OC619第一层": "团队总业绩 × 5% - 下属所有佣金",
-            "OC619第二层": "自己及下属业绩 × 20% - 下属第三层佣金", 
-            "OC619第三层": "全部第三层业绩总和 × 5% (平分)",
-            "其他代理": "自己总金额 × 30%"
+            "普通代理": "30% (肥子代理 638, BELLA, WS, 其他)",
+            "OC619层级代理": [
+                "第一层 (OC619): 自己+第二层+第三层业绩 × 5%",
+                "第二层 (OC619-01): 自己+第三层业绩 × 20%", 
+                "第三层 (OC619-01-01等): 仅自己业绩 × 5%"
+            ]
         }
     }
