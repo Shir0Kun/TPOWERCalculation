@@ -311,7 +311,7 @@ def calculate_hierarchical_commission_correct(merged_df):
             calculation_note = f"{level_name}总金额({level_data[level_name]['total_amount']}) {是否计算} × 5%"
         
         commission_results[level_name] = {
-            "计算基础(有效金额)": base_amount,
+            "计算基础": base_amount,  # 修改为统一的键名
             "佣金率": level_info["rate"],
             "佣金": commission,
             "原始总金额": level_data[level_name]["total_amount"],
@@ -359,12 +359,13 @@ async def export_sorted(file: UploadFile = File(...)):
             for level, result in commission_results.items():
                 commission_data.append({
                     '层级': level,
-                    '计算基础(正数金额)': result["计算基础(正数金额)"],
+                    '计算基础': result["计算基础"],  # 修正这里
                     '佣金率': f"{result['佣金率']*100}%",
                     '佣金': result["佣金"],
                     '原始总金额': result["原始总金额"],
                     '正数金额': result["正数金额"],
                     '负数金额': result["负数金额"],
+                    '有效金额': result["有效金额"],  # 添加有效金额显示
                     '用户数量': result["用户数量"],
                     '计算说明': result["计算说明"]
                 })
@@ -409,11 +410,10 @@ def root():
         "features": {
             "sorting": "按用户名和层级双重排序",
             "commission_rules": {
-                "第一层 OC619": "(所有正数金额总和) × 5%",
-                "第二层 OC619-01": "(OC619-01正数金额 + 所有第三层正数金额) × 20%", 
-                "第三层": "(各自正数金额) × 5%"
+                "第一层 OC619": "(OC619有效金额 + 所有下层有效金额) × 5%",
+                "第二层 OC619-01": "(OC619-01有效金额 + 所有第三层有效金额) × 20%", 
+                "第三层": "(各自有效金额) × 5%"
             },
-            "note": "负数金额完全排除在佣金计算之外，只计算正数金额"
+            "note": "先计算每个层级的总金额(正数+负数)，只有总金额为正数时才参与佣金计算"
         }
     }
-
