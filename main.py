@@ -1,11 +1,47 @@
 from fastapi import FastAPI, UploadFile, File, Response
+from fastapi.openapi.utils import get_openapi
 import io
 import pandas as pd
 from openpyxl import load_workbook
 from datetime import datetime
 import re
 
-app = FastAPI()
+# 创建FastAPI应用并设置自定义标题
+app = FastAPI(
+    title="佣金计算系统",
+    description="上传Excel文件自动计算层级佣金",
+    version="1.0.0",
+    docs_url="/docs",  # 确保文档页面可用
+    redoc_url="/redoc"  # 可选：启用ReDoc页面
+)
+
+# 自定义OpenAPI配置，隐藏schemas并设置中文标签
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    
+    openapi_schema = get_openapi(
+        title="佣金计算系统",
+        version="1.0.0",
+        description="上传Excel文件自动计算层级佣金",
+        routes=app.routes,
+    )
+    
+    # 隐藏schemas部分
+    openapi_schema.pop("components", None)
+    
+    # 添加中文标签
+    openapi_schema["tags"] = [
+        {
+            "name": "佣金计算",
+            "description": "Excel文件上传和佣金计算功能"
+        }
+    ]
+    
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+app.openapi = custom_openapi
 
 def process_excel_data(contents):
     """处理Excel数据的通用函数"""
@@ -211,9 +247,9 @@ def calculate_hierarchical_commission(df):
     
     return commission_results
 
-@app.post("/export-sorted/")
+@app.post("/export-sorted/", tags=["佣金计算"])
 async def export_sorted(file: UploadFile = File(...)):
-    """完全排序导出 - 先按上分地方，再按代理序号，包含层级佣金计算"""
+    """上传Excel文件，自动计算并导出层级佣金报告"""
     try:
         contents = await file.read()
         df, error = process_excel_data(contents)
@@ -284,15 +320,17 @@ async def export_sorted(file: UploadFile = File(...)):
     except Exception as e:
         return {"error": str(e)}
 
-@app.get("/")
+@app.get("/", tags=["佣金计算"])
 def root():
     return {
-        "message": "Excel Commission Calculation API",
-        "endpoint": {
-            "/export-sorted/": "Upload Excel file to get hierarchical commission calculation"
-        },
-        "features": {
-            "commission": "Hierarchical commission calculation for OC619 series",
-            "export": "2-sheet Excel report with commission details"
+        "message": "佣金计算系统 API",
+        "功能": "上传Excel文件自动计算层级佣金",
+        "接口": {
+            "/export-sorted/": "上传Excel文件并下载佣金报告"
         }
     }
+
+# 健康检查端点
+@app.get("/health", tags=["系统状态"])
+def health_check():
+    return {"status": "运行正常", "message": "佣金计算系统已就绪"}
