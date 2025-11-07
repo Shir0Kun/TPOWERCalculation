@@ -5,7 +5,14 @@ from openpyxl import load_workbook
 from datetime import datetime
 import re
 
-app = FastAPI()
+# 创建FastAPI实例时隐藏schemas
+app = FastAPI(
+    title="Excel Commission Calculation API",
+    description="上传Excel文件进行层级佣金计算",
+    docs_url="/docs",
+    redoc_url=None,
+    openapi_url="/api/v1/openapi.json"
+)
 
 def process_excel_data(contents):
     """处理Excel数据的通用函数"""
@@ -211,7 +218,9 @@ def calculate_hierarchical_commission(df):
     
     return commission_results
 
-@app.post("/export-sorted/")
+@app.post("/export-sorted/", 
+          summary="导出佣金计算报告",
+          description="上传Excel文件，下载包含层级佣金计算和汇总的Excel报告")
 async def export_sorted(file: UploadFile = File(...)):
     """完全排序导出 - 先按上分地方，再按代理序号，包含层级佣金计算"""
     try:
@@ -284,15 +293,39 @@ async def export_sorted(file: UploadFile = File(...)):
     except Exception as e:
         return {"error": str(e)}
 
-@app.get("/")
-def root():
+@app.get("/", 
+         summary="API首页",
+         description="Excel佣金计算API首页")
+async def root():
     return {
         "message": "Excel Commission Calculation API",
         "endpoint": {
-            "/export-sorted/": "Upload Excel file to get hierarchical commission calculation"
+            "/export-sorted/": "上传Excel文件获取层级佣金计算报告"
         },
         "features": {
-            "commission": "Hierarchical commission calculation for OC619 series",
-            "export": "2-sheet Excel report with commission details"
+            "commission": "OC619系列层级佣金计算",
+            "export": "包含两个工作表的Excel报告"
         }
     }
+
+# 配置隐藏schemas
+from fastapi.openapi.utils import get_openapi
+
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    
+    openapi_schema = get_openapi(
+        title="Excel Commission Calculation API",
+        version="1.0.0",
+        description="上传Excel文件进行层级佣金计算",
+        routes=app.routes,
+    )
+    
+    # 隐藏schemas部分
+    openapi_schema["components"] = {}
+    
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+app.openapi = custom_openapi
