@@ -1,18 +1,32 @@
 from fastapi import FastAPI, UploadFile, File, Response
+from fastapi.openapi.utils import get_openapi
 import io
 import pandas as pd
 from openpyxl import load_workbook
 from datetime import datetime
 import re
 
-# 创建FastAPI实例
-app = FastAPI(
-    title="Excel Commission Calculation API",
-    description="上传Excel文件进行层级佣金计算",
-    docs_url="/docs",
-    redoc_url=None,
-    openapi_url="/api/v1/openapi.json"
-)
+app = FastAPI()
+
+# 自定义 OpenAPI 配置，隐藏 schemas
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    
+    openapi_schema = get_openapi(
+        title="Excel Commission Calculation API",
+        version="1.0.0",
+        description="上传Excel文件进行层级佣金计算",
+        routes=app.routes,
+    )
+    
+    # 隐藏 schemas 部分
+    openapi_schema.pop("components", None)
+    
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+app.openapi = custom_openapi
 
 def process_excel_data(contents):
     """处理Excel数据的通用函数"""
@@ -218,9 +232,7 @@ def calculate_hierarchical_commission(df):
     
     return commission_results
 
-@app.post("/export-sorted/", 
-          summary="导出佣金计算报告",
-          description="上传Excel文件，下载包含层级佣金计算和汇总的Excel报告")
+@app.post("/export-sorted/")
 async def export_sorted(file: UploadFile = File(...)):
     """完全排序导出 - 先按上分地方，再按代理序号，包含层级佣金计算"""
     try:
@@ -293,14 +305,12 @@ async def export_sorted(file: UploadFile = File(...)):
     except Exception as e:
         return {"error": str(e)}
 
-@app.get("/", 
-         summary="API首页",
-         description="Excel佣金计算API首页")
-async def root():
+@app.get("/")
+def root():
     return {
         "message": "Excel Commission Calculation API",
         "endpoint": {
-            "/export-sorted/": "上传Excel文件获取层级佣金计算报告"
+            "/export-sorted/": "上传Excel文件进行层级佣金计算"
         },
         "features": {
             "commission": "OC619系列层级佣金计算",
@@ -308,31 +318,7 @@ async def root():
         }
     }
 
-# 更安全的schemas隐藏方法
-from fastapi.openapi.utils import get_openapi
-
-def custom_openapi():
-    if app.openapi_schema:
-        return app.openapi_schema
-    
-    openapi_schema = get_openapi(
-        title="Excel Commission Calculation API",
-        version="1.0.0",
-        description="上传Excel文件进行层级佣金计算",
-        routes=app.routes,
-    )
-    
-    # 安全的隐藏schemas方法 - 只保留必要的schemas
-    if "components" in openapi_schema and "schemas" in openapi_schema["components"]:
-        # 只保留HTTPValidationError等必要的schemas
-        necessary_schemas = {}
-        for schema_name, schema in openapi_schema["components"]["schemas"].items():
-            if "HTTPValidationError" in schema_name or "ValidationError" in schema_name:
-                necessary_schemas[schema_name] = schema
-        
-        openapi_schema["components"]["schemas"] = necessary_schemas
-    
-    app.openapi_schema = openapi_schema
-    return app.openapi_schema
-
-app.openapi = custom_openapi
+# 健康检查端点
+@app.get("/health")
+def health_check():
+    return {"status": "healthy", "message": "API is running"}
