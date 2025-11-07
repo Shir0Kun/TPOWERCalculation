@@ -5,7 +5,7 @@ from openpyxl import load_workbook
 from datetime import datetime
 import re
 
-# 创建FastAPI实例时隐藏schemas
+# 创建FastAPI实例
 app = FastAPI(
     title="Excel Commission Calculation API",
     description="上传Excel文件进行层级佣金计算",
@@ -308,7 +308,7 @@ async def root():
         }
     }
 
-# 配置隐藏schemas
+# 更安全的schemas隐藏方法
 from fastapi.openapi.utils import get_openapi
 
 def custom_openapi():
@@ -322,8 +322,15 @@ def custom_openapi():
         routes=app.routes,
     )
     
-    # 隐藏schemas部分
-    openapi_schema["components"] = {}
+    # 安全的隐藏schemas方法 - 只保留必要的schemas
+    if "components" in openapi_schema and "schemas" in openapi_schema["components"]:
+        # 只保留HTTPValidationError等必要的schemas
+        necessary_schemas = {}
+        for schema_name, schema in openapi_schema["components"]["schemas"].items():
+            if "HTTPValidationError" in schema_name or "ValidationError" in schema_name:
+                necessary_schemas[schema_name] = schema
+        
+        openapi_schema["components"]["schemas"] = necessary_schemas
     
     app.openapi_schema = openapi_schema
     return app.openapi_schema
