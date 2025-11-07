@@ -359,13 +359,13 @@ async def export_sorted(file: UploadFile = File(...)):
             for level, result in commission_results.items():
                 commission_data.append({
                     '层级': level,
-                    '计算基础': result["计算基础"],  # 修正这里
+                    '计算基础': result["计算基础"],
                     '佣金率': f"{result['佣金率']*100}%",
                     '佣金': result["佣金"],
                     '原始总金额': result["原始总金额"],
                     '正数金额': result["正数金额"],
                     '负数金额': result["负数金额"],
-                    '有效金额': result["有效金额"],  # 添加有效金额显示
+                    '有效金额': result["有效金额"],
                     '用户数量': result["用户数量"],
                     '计算说明': result["计算说明"]
                 })
@@ -373,15 +373,19 @@ async def export_sorted(file: UploadFile = File(...)):
             commission_df = pd.DataFrame(commission_data)
             commission_df.to_excel(writer, sheet_name='Hierarchical_Commission', index=False)
             
-            # Sheet 3: 佣金汇总
-            total_commission = sum(result["佣金"] for result in commission_results.values())
-            summary_data = [{
-                '总佣金': total_commission,
-                '计算层级数量': len(commission_results)
-            }]
-            # 添加各层级佣金明细
-            for level, result in commission_results.items():
-                summary_data[0][f'{level}佣金'] = result["佣金"]
+            # Sheet 3: 佣金汇总 - 只显示各层级佣金，按层级顺序排列
+            # 定义层级显示顺序
+            level_order = ["OC619", "OC619-01", "OC619-01-01", "OC619-01-02", "OC619-01-03", "OC619-01-01-01"]
+            
+            summary_data = []
+            
+            # 按层级顺序添加各层级佣金
+            for level in level_order:
+                if level in commission_results:
+                    summary_data.append({
+                        '项目': f'{level}佣金',
+                        '金额': commission_results[level]["佣金"]
+                    })
             
             summary_df = pd.DataFrame(summary_data)
             summary_df.to_excel(writer, sheet_name='Commission_Summary', index=False)
@@ -417,3 +421,4 @@ def root():
             "note": "先计算每个层级的总金额(正数+负数)，只有总金额为正数时才参与佣金计算"
         }
     }
+
