@@ -178,13 +178,13 @@ def safe_convert_to_float(value):
         return 0.0
 
 def calculate_hierarchical_commission_correct(merged_df):
-    """正确的层级佣金计算规则 - 正确处理负数"""
+    """正确的层级佣金计算规则 - 基于总金额正负判断"""
     # 找到金额列和层级列
     amount_col = None
     level_col = None
     
     for col in merged_df.columns:
-        if "金额" in str(col):
+        if "金额" in str(col) and "数值" not in str(col):
             amount_col = col
         if "层级" in str(col):
             level_col = col
@@ -206,16 +206,20 @@ def calculate_hierarchical_commission_correct(merged_df):
         level_str = str(level).strip()
         level_df = merged_df[merged_df[level_col] == level]
         
-        # 计算总金额（包含负数）
+        # 计算总金额（正数+负数）
         total_amount = level_df['金额_数值'].sum()
-        # 只计算正数金额（用于佣金计算）
+        # 只计算正数金额
         positive_amount = level_df[level_df['金额_数值'] > 0]['金额_数值'].sum()
+        # 负数金额
+        negative_amount = level_df[level_df['金额_数值'] < 0]['金额_数值'].sum()
         
         level_data[level_str] = {
             "total_amount": total_amount,
             "positive_amount": positive_amount,
+            "negative_amount": negative_amount,
             "user_count": len(level_df),
-            "negative_amount": level_df[level_df['金额_数值'] < 0]['金额_数值'].sum()
+            # 如果总金额 > 0，则有效金额为总金额，否则为0
+            "effective_amount": total_amount if total_amount > 0 else 0
         }
     
     # 定义层级关系
@@ -228,55 +232,92 @@ def calculate_hierarchical_commission_correct(merged_df):
         "OC619-01-01-01": {"rate": 0.05, "level": 3}
     }
     
-    # 计算各层级的计算基础（只使用正数金额）
+    # 计算各层级的计算基础（基于有效金额）
     def calculate_base_amount(level_name):
-        """计算层级的计算基础（只包含正数金额）"""
-        base = 0
+        """计算层级的计算基础（基于有效金额）"""
+        if level_name not in hierarchy_levels:
+            return 0
+        
+        level_info = hierarchy_levels[level_name]
         
         if level_name == "OC619":  # 第一层
-            # 自己 + 第二层 + 第三层的正数金额
+            # 自己 + 第二层 + 第三层的有效金额
+            base = level_data.get(level_name, {}).get("effective_amount", 0)
+            
+            # 加上第二层和第三层的有效金额
             for lv_name, lv_data in level_data.items():
-                if lv_name in hierarchy_levels:
-                    base += lv_data["positive_amount"]
+                if lv_name in hierarchy_levels and lv_name != level_name:
+                    base += lv_data["effective_amount"]
+            
+            return base
         
         elif level_name == "OC619-01":  # 第二层
-            # 自己 + 第三层的正数金额
-            base += level_data.get(level_name, {}).get("positive_amount", 0)
-            for lv_name, lv_data in level_data.items():
-                if lv_name in ["OC619-01-01", "OC619-01-02", "OC619-01-03", "OC619-01-01-01"]:
-                    base += lv_data["positive_amount"]
+            # 自己的有效金额 + 所有第三层的有效金额
+            base = level_data.get(level_name, {}).get("effective_amount", 0)
+            
+            # 加上所有第三层的有效金额
+            third_levels = ["OC619-01-01", "OC619-01-02", "OC619-01-03", "OC619-01-01-01"]
+            for third_level in third_levels:
+                if third_level in level_data:
+                    base += level_data[third_level]["effective_amount"]
+            
+            return base
         
         else:  # 第三层
-            # 只计算自己的正数金额
-            base += level_data.get(level_name, {}).get("positive_amount", 0)
-        
-        return base
+            # 只计算自己的有效金额
+            return level_data.get(level_name, {}).get("effective_amount", 0)
     
     # 计算佣金
     commission_results = {}
     
     for level_name, level_info in hierarchy_levels.items():
         if level_name not in level_data:
-            continue
+            # 如果该层级没有数据，但需要计算，使用0
+            level_data[level_name] = {
+                "total_amount": 0,
+                "positive_amount": 0,
+                "negative_amount": 0,
+                "user_count": 0,
+                "effective_amount": 0
+            }
         
         base_amount = calculate_base_amount(level_name)
         commission = base_amount * level_info["rate"]
         
         # 获取计算说明
         if level_name == "OC619":
-            calculation_note = "OC619正数金额 + 所有下层正数金额 × 5%"
+            # 计算所有下层的有效金额总和
+            下层有效金额 = 0
+            for lv_name, lv_data in level_data.items():
+                if lv_name in hierarchy_levels and lv_name != level_name:
+                    下层有效金额 += lv_data["effective_amount"]
+            
+            是否计算 = "计算" if level_data[level_name]["total_amount"] > 0 else "不计算(总金额为负)"
+            calculation_note = f"OC619总金额({level_data[level_name]['total_amount']}) {是否计算} + 所有下层有效金额({下层有效金额}) × 5%"
+        
         elif level_name == "OC619-01":
-            calculation_note = "OC619-01正数金额 + 所有第三层正数金额 × 20%"
+            # 计算所有第三层的有效金额总和
+            third_levels_effective = 0
+            third_levels = ["OC619-01-01", "OC619-01-02", "OC619-01-03", "OC619-01-01-01"]
+            for third_level in third_levels:
+                if third_level in level_data:
+                    third_levels_effective += level_data[third_level]["effective_amount"]
+            
+            是否计算 = "计算" if level_data[level_name]["total_amount"] > 0 else "不计算(总金额为负)"
+            calculation_note = f"OC619-01总金额({level_data[level_name]['total_amount']}) {是否计算} + 所有第三层有效金额({third_levels_effective}) × 20%"
+        
         else:
-            calculation_note = f"{level_name}正数金额 × 5%"
+            是否计算 = "计算" if level_data[level_name]["total_amount"] > 0 else "不计算(总金额为负)"
+            calculation_note = f"{level_name}总金额({level_data[level_name]['total_amount']}) {是否计算} × 5%"
         
         commission_results[level_name] = {
-            "计算基础(正数金额)": base_amount,
+            "计算基础(有效金额)": base_amount,
             "佣金率": level_info["rate"],
             "佣金": commission,
             "原始总金额": level_data[level_name]["total_amount"],
             "正数金额": level_data[level_name]["positive_amount"],
             "负数金额": level_data[level_name]["negative_amount"],
+            "有效金额": level_data[level_name]["effective_amount"],
             "用户数量": level_data[level_name]["user_count"],
             "计算说明": calculation_note
         }
@@ -375,3 +416,4 @@ def root():
             "note": "负数金额完全排除在佣金计算之外，只计算正数金额"
         }
     }
+
