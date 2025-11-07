@@ -10,12 +10,10 @@ import re
 app = FastAPI(
     title="佣金计算系统",
     description="上传Excel文件自动计算层级佣金",
-    version="1.0.0",
-    docs_url="/docs",  # 确保文档页面可用
-    redoc_url="/redoc"  # 可选：启用ReDoc页面
+    version="1.0.0"
 )
 
-# 自定义OpenAPI配置，隐藏schemas并设置中文标签
+# 修复后的OpenAPI配置
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
@@ -27,16 +25,14 @@ def custom_openapi():
         routes=app.routes,
     )
     
-    # 隐藏schemas部分
-    openapi_schema.pop("components", None)
-    
-    # 添加中文标签
-    openapi_schema["tags"] = [
-        {
-            "name": "佣金计算",
-            "description": "Excel文件上传和佣金计算功能"
+    # 保留必要的components结构但清空内容
+    if "components" in openapi_schema:
+        openapi_schema["components"] = {
+            "schemas": {},
+            "responses": {},
+            "parameters": {},
+            "securitySchemes": {}
         }
-    ]
     
     app.openapi_schema = openapi_schema
     return app.openapi_schema
@@ -247,7 +243,7 @@ def calculate_hierarchical_commission(df):
     
     return commission_results
 
-@app.post("/export-sorted/", tags=["佣金计算"])
+@app.post("/export-sorted/")
 async def export_sorted(file: UploadFile = File(...)):
     """上传Excel文件，自动计算并导出层级佣金报告"""
     try:
@@ -320,7 +316,7 @@ async def export_sorted(file: UploadFile = File(...)):
     except Exception as e:
         return {"error": str(e)}
 
-@app.get("/", tags=["佣金计算"])
+@app.get("/")
 def root():
     return {
         "message": "佣金计算系统 API",
@@ -331,6 +327,6 @@ def root():
     }
 
 # 健康检查端点
-@app.get("/health", tags=["系统状态"])
+@app.get("/health")
 def health_check():
     return {"status": "运行正常", "message": "佣金计算系统已就绪"}
